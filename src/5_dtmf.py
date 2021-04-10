@@ -2,7 +2,12 @@
 
 # %%
 import numpy as np
-from librosa import stft, amplitude_to_db
+import librosa as lib
+from scipy.spatial import distance
+# from librosa import stft, amplitude_to_db
+
+import matplotlib.pyplot as plt
+import librosa.display
 
 # note: librosa defaults to 22.050 Hz sample rate; adjust if needed!
 
@@ -23,7 +28,8 @@ dtmf_tones = [
     ('*', 941, 1209),
     ('0', 941, 1336),
     ('#', 941, 1477),
-    ('D', 941, 1633)
+    ('D', 941, 1633),
+    ('-', 0, 1130)
     ]
 
 # %%
@@ -37,6 +43,48 @@ dtmf_tones = [
 
 # note: you will need a couple of helper functions...
 
-def decode(y: np.ndarray, sr: float) -> list:
-	"""y is input signal, sr is sample rate; returns list of DTMF-signals (no silence)"""
-	pass
+def getSpectrum(path: str):
+    x, sr = lib.load(path)
+    stft =  np.abs(lib.stft(x))
+    powerSpectrum = lib.amplitude_to_db(stft)
+    return powerSpectrum
+
+def decode(y: np.ndarray, sr=22050) -> list:
+    """y is input signal, sr is sample rate; returns list of DTMF-signals (no silence)"""
+    
+    D = np.zeros((len(dtmf_tones),len(y[0])+1), dtype=int)
+    # breich 697 bis 941 hat indixes 60 und 90 
+    # breich 1209 bis 1633 hat indixes 105 und 160 
+    freqList = librosa.fft_frequencies(sr)
+    resultArray = []
+
+    for t in range(1,len(y[0])):
+        indexLowerBound = np.argmax(y.T[t-1][:91])
+        indexUpperBound = 105 + np.argmax(y.T[t-1][105:161])
+        maxFreq = (freqList[indexLowerBound], freqList[indexUpperBound])
+        minCostBeforeIndex =  np.argmin(D.T[t-1])
+        resultArray.append(dtmf_tones[minCostBeforeIndex][0])
+        for s in range(len(dtmf_tones)):
+            cost = distance.euclidean(dtmf_tones[s][1:3],maxFreq)
+            D[s,t] = cost + D[minCostBeforeIndex, t-1]
+
+    collapsedResultArray = []
+    failStateCounter = 0
+    currentChar = ''
+    for result in resultArray: 
+        if result != currentChar or failStateCounter == 7:
+            if result != '-':
+                collapsedResultArray.append(result)
+            currentChar = result
+            failStateCounter = 0
+        elif failStateCounter < 7:
+            failStateCounter += 1
+
+    return collapsedResultArray
+
+path = "../../extern/dtmf/dtmf_123_444555_678.wav"
+y = getSpectrum(path)
+
+print(decode(y))
+
+# %%
